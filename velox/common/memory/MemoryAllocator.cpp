@@ -145,14 +145,6 @@ class MallocAllocator : public MemoryAllocator {
 
   void freeBytes(void* p, uint64_t bytes) noexcept override;
 
-  MachinePageCount numAllocated() const override {
-    return numAllocated_;
-  }
-
-  MachinePageCount numMapped() const override {
-    return numMapped_;
-  }
-
   Stats stats() const override {
     return stats_;
   }

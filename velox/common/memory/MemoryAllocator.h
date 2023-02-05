@@ -297,9 +297,13 @@ class MemoryAllocator : public std::enable_shared_from_this<MemoryAllocator> {
     return sizeClassSizes_;
   }
 
-  virtual MachinePageCount numAllocated() const = 0;
+  virtual MachinePageCount numAllocated() const {
+    return numAllocated_;
+  }
 
-  virtual MachinePageCount numMapped() const = 0;
+  virtual MachinePageCount numMapped() const {
+    return numMapped_;
+  }
 
   virtual Stats stats() const {
     return Stats();

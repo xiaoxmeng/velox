@@ -52,42 +52,50 @@ bool MmapAllocator::allocateNonContiguous(
 
   const int64_t numFreed = freeInternal(out);
   if (numFreed != 0) {
+    assert(false);
     numAllocated_.fetch_sub(numFreed);
   }
 
   if (testingHasInjectedFailure(InjectedFailure::kCap)) {
+    assert(false);
     if (reservationCB != nullptr) {
       reservationCB(AllocationTraits::pageBytes(numFreed), false);
     }
     return false;
   }
 
-  if (numAllocated_ + mix.totalPages > capacity_) {
-    if (reservationCB != nullptr) {
-      reservationCB(AllocationTraits::pageBytes(numFreed), false);
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+#if 0
+    if (numAllocated_ + mix.totalPages > capacity_) {
+      if (reservationCB != nullptr) {
+        reservationCB(AllocationTraits::pageBytes(numFreed), false);
+      }
+      return false;
     }
-    return false;
-  }
-  if (numAllocated_.fetch_add(mix.totalPages) + mix.totalPages > capacity_) {
-    numAllocated_.fetch_sub(mix.totalPages);
-    if (reservationCB != nullptr) {
-      reservationCB(AllocationTraits::pageBytes(numFreed), false);
-    }
-    return false;
-  }
+#endif
 
-  ++numAllocations_;
-  numAllocatedPages_ += mix.totalPages;
-  const int64_t numNeededPages = mix.totalPages - numFreed;
-  if (reservationCB != nullptr) {
-    try {
-      reservationCB(AllocationTraits::pageBytes(numNeededPages), true);
-    } catch (const std::exception& e) {
+    if (numAllocated_.fetch_add(mix.totalPages) + mix.totalPages > capacity_) {
       numAllocated_.fetch_sub(mix.totalPages);
-      reservationCB(AllocationTraits::pageBytes(numFreed), false);
-      std::rethrow_exception(std::current_exception());
+      if (reservationCB != nullptr) {
+        reservationCB(AllocationTraits::pageBytes(numFreed), false);
+      }1
+      return false;
+    }
+
+    ++numAllocations_;
+    const int64_t numNeededPages = mix.totalPages - numFreed;
+    if (reservationCB != nullptr) {
+      try {
+        reservationCB(AllocationTraits::pageBytes(numNeededPages), true);
+      } catch (const std::exception& e) {
+        numAllocated_.fetch_sub(mix.totalPages);
+        reservationCB(AllocationTraits::pageBytes(numFreed), false);
+        std::rethrow_exception(std::current_exception());
+      }
     }
   }
+
   MachinePageCount newMapsNeeded = 0;
   for (int i = 0; i < mix.numSizes; ++i) {
     bool success;
@@ -102,28 +110,44 @@ bool MmapAllocator::allocateNonContiguous(
       success = false;
     }
     if (!success) {
+      std::lock_guard<std::mutex> l(mutex_);
       // This does not normally happen since any size class can accommodate
       // all the capacity. 'allocatedPages_' must be out of sync.
       LOG(WARNING) << "Failed allocation in size class " << i << " for "
                    << mix.sizeCounts[i] << " pages";
-      const auto failedPages = mix.totalPages - out.numPages();
-      freeNonContiguous(out);
-      numAllocated_.fetch_sub(failedPages);
+      // const auto failedPages = mix.totalPages - out.numPages();
+      // freeNonContiguous(out);
+      assert(false);
+      freeInternal(out);
+      numAllocated_.fetch_sub(mix.totalPages);
       if (reservationCB != nullptr) {
         reservationCB(AllocationTraits::pageBytes(mix.totalPages), false);
       }
       return false;
     }
   }
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    allocationSet_.insert(out.numPages());
+  }
   if (newMapsNeeded == 0) {
+    assert(out.numPages() == mix.totalPages);
+    { std::lock_guard<std::mutex> l(mutex_); }
     return true;
   }
   if (ensureEnoughMappedPages(newMapsNeeded)) {
+    assert(out.numPages() == mix.totalPages);
     markAllMapped(out);
     return true;
   }
-
-  freeNonContiguous(out);
+  LOG(INFO) << "ensure failed " << newMapsNeeded << " " << mix.totalPages;
+  //freeNonContiguous(out);
+  freeInternal(out);
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    freeSet_.insert(mix.totalPages);
+    numAllocated_.fetch_sub(mix.totalPages);
+  }
   if (reservationCB != nullptr) {
     reservationCB(AllocationTraits::pageBytes(mix.totalPages), false);
   }
@@ -154,8 +178,14 @@ bool MmapAllocator::ensureEnoughMappedPages(int32_t newMappedNeeded) {
 }
 
 int64_t MmapAllocator::freeNonContiguous(Allocation& allocation) {
+  const auto numPages = allocation.numPages();
   const auto numFreed = freeInternal(allocation);
-  numAllocated_.fetch_sub(numFreed);
+  assert(numPages == numFreed);
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    freeSet_.insert(numPages);
+    numAllocated_.fetch_sub(numFreed);
+  }
   return AllocationTraits::pageBytes(numFreed);
 }
 
@@ -192,6 +222,7 @@ bool MmapAllocator::allocateContiguousImpl(
     Allocation* collateral,
     ContiguousAllocation& allocation,
     ReservationCallback reservationCB) {
+  assert(false);
   MachinePageCount numCollateralPages = 0;
   // 'collateral' and 'allocation' get freed anyway. But the counters are not
   // updated to reflect this. Rather, we add the delta that is needed on top of
@@ -315,6 +346,7 @@ bool MmapAllocator::allocateContiguousImpl(
 }
 
 void MmapAllocator::freeContiguousImpl(ContiguousAllocation& allocation) {
+  assert(false);
   if (allocation.empty()) {
     return;
   }
@@ -837,12 +869,16 @@ bool MmapAllocator::checkConsistency() const {
     ++numErrors;
     LOG(WARNING) << "Mapped count out of sync. Actual= "
                  << mappedCount + numExternalMapped_
-                 << " recorded= " << numMapped_;
+                 << " recorded= " << numMapped_ << " " << numExternalMapped_ << " count " << count;
   }
   if (numErrors) {
     LOG(ERROR) << "MmapAllocator::checkConsistency(): " << numErrors
                << " errors";
   }
+  LOG(INFO) << "State: "
+               << mappedCount << " external " << numExternalMapped_
+
+               << " recorded= " << numMapped_ << " allocated_ " << count << " recorded allocation " << numAllocated_;
   return numErrors == 0;
 }
 
@@ -855,6 +891,34 @@ std::string MmapAllocator::toString() const {
     out << sizeClass->toString() << std::endl;
   }
   out << "]" << std::endl;
+
+  std::lock_guard<std::mutex> l(mutex_);
+  LOG(INFO) << "numAllocs " << allocationSet_.size()
+            << " numFrees: " << freeSet_.size();
+  auto allocIt = allocationSet_.begin();
+  auto freeIt = freeSet_.begin();
+  while ((allocIt != allocationSet_.end()) && (freeIt != freeSet_.end())) {
+    if (*allocIt == *freeIt) {
+      ++allocIt;
+      ++freeIt;
+      continue;
+    }
+    if (*allocIt < *freeIt) {
+      LOG(INFO) << "extra allocate " << *allocIt;
+      ++allocIt;
+      continue;
+    }
+    LOG(INFO) << "extra free " << *freeIt;
+    ++freeIt;
+  }
+  while (allocIt != allocationSet_.end()) {
+    LOG(INFO) << "extra allocate " << *allocIt;
+    ++allocIt;
+  }
+  while (freeIt != freeSet_.end()) {
+    LOG(INFO) << "extra free " << *freeIt;
+    ++freeIt;
+  }
   return out.str();
 }
 

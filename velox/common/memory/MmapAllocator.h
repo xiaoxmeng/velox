@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <unordered_set>
 
 #include "velox/common/base/SimdUtil.h"
@@ -111,14 +112,6 @@ class MmapAllocator : public MemoryAllocator {
     return capacity_;
   }
 
-  MachinePageCount numAllocated() const override {
-    return numAllocated_;
-  }
-
-  MachinePageCount numMapped() const override {
-    return numMapped_;
-  }
-
   MachinePageCount numExternalMapped() const {
     return numExternalMapped_;
   }
@@ -130,6 +123,14 @@ class MmapAllocator : public MemoryAllocator {
   }
 
   std::string toString() const override;
+
+  MachinePageCount numAllocated() const override {
+    return numAllocated_;
+  }
+
+  MachinePageCount numMapped() const override {
+    return numMapped_;
+  }
 
  private:
   static constexpr uint64_t kAllSet = 0xffffffffffffffff;
@@ -338,7 +339,6 @@ class MmapAllocator : public MemoryAllocator {
 
   // Statistics.
   std::atomic<uint64_t> numAllocations_ = 0;
-  std::atomic<uint64_t> numAllocatedPages_ = 0;
   std::atomic<uint64_t> numAdvisedPages_ = 0;
 
   // Allocations that are larger than largest size classes will be delegated to
@@ -347,6 +347,14 @@ class MmapAllocator : public MemoryAllocator {
   std::unique_ptr<ManagedMmapArenas> managedArenas_;
 
   Stats stats_;
+
+  std::atomic<MachinePageCount> numAllocated_{0};
+  // Tracks the number of mapped pages.
+  std::atomic<MachinePageCount> numMapped_{0};
+
+  mutable std::mutex mutex_;
+  std::multiset<int64_t> allocationSet_;
+  std::multiset<int64_t> freeSet_;
 };
 
 } // namespace facebook::velox::memory
