@@ -41,12 +41,12 @@ class NestedLoopJoinProbe : public Operator {
   void close() override;
 
  private:
-  /// Maximum number of rows in the output batch.
+  // Maximum number of rows in the output batch.
   const uint32_t outputBatchSize_;
 
   std::vector<IdentityProjection> buildProjections_;
 
-  std::optional<std::vector<VectorPtr>> buildData_;
+  std::optional<std::vector<VectorPtr>> buildVectors_;
 
   // Index into buildData_ for the build side vector to process on next call to
   // getOutput().

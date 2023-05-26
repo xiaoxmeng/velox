@@ -48,7 +48,7 @@ NestedLoopJoinProbe::NestedLoopJoinProbe(
 }
 
 BlockingReason NestedLoopJoinProbe::isBlocked(ContinueFuture* future) {
-  if (buildData_.has_value()) {
+  if (buildVectors_.has_value()) {
     return BlockingReason::kNotBlocked;
   }
 
@@ -61,9 +61,9 @@ BlockingReason NestedLoopJoinProbe::isBlocked(ContinueFuture* future) {
     return BlockingReason::kWaitForJoinBuild;
   }
 
-  buildData_ = std::move(buildData);
+  buildVectors_ = std::move(buildData);
 
-  if (buildData_->empty()) {
+  if (buildVectors_->empty()) {
     // Build side is empty. Return empty set of rows and  terminate the pipeline
     // early.
     buildSideEmpty_ = true;
@@ -89,7 +89,7 @@ RowVectorPtr NestedLoopJoinProbe::getOutput() {
 
   const auto inputSize = input_->size();
 
-  auto buildSize = buildData_.value()[buildIndex_]->size();
+  auto buildSize = buildVectors_.value()[buildIndex_]->size();
   vector_size_t probeCnt;
   if (buildSize > outputBatchSize_) {
     probeCnt = 1;
@@ -122,7 +122,7 @@ RowVectorPtr NestedLoopJoinProbe::getOutput() {
   }
 
   auto buildRowVector =
-      buildData_.value()[buildIndex_]->asUnchecked<RowVector>();
+      buildVectors_.value()[buildIndex_]->asUnchecked<RowVector>();
   for (const auto& projection : buildProjections_) {
     VectorPtr buildVector = buildRowVector->childAt(projection.inputChannel);
 
@@ -137,7 +137,7 @@ RowVectorPtr NestedLoopJoinProbe::getOutput() {
   if (probeRow_ == inputSize) {
     probeRow_ = 0;
     ++buildIndex_;
-    if (buildIndex_ == buildData_->size()) {
+    if (buildIndex_ == buildVectors_->size()) {
       buildIndex_ = 0;
       input_.reset();
     }
@@ -150,7 +150,7 @@ bool NestedLoopJoinProbe::isFinished() {
 }
 
 void NestedLoopJoinProbe::close() {
-  buildData_.reset();
+  buildVectors_.reset();
   Operator::close();
 }
 } // namespace facebook::velox::exec
