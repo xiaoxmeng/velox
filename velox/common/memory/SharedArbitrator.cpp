@@ -25,7 +25,7 @@ using facebook::velox::common::testutil::TestValue;
 namespace facebook::velox::memory {
 
 void SharedArbitrator::sortCandidatesByFreeCapacity(
-    std::vector<Candidate>& candidates) {
+    std::vector<Candidate>& candidates) const {
   std::sort(
       candidates.begin(),
       candidates.end(),
@@ -39,7 +39,7 @@ void SharedArbitrator::sortCandidatesByFreeCapacity(
 }
 
 void SharedArbitrator::sortCandidatesByReclaimableMemory(
-    std::vector<Candidate>& candidates) {
+    std::vector<Candidate>& candidates) const {
   std::sort(
       candidates.begin(),
       candidates.end(),
@@ -56,6 +56,29 @@ void SharedArbitrator::sortCandidatesByReclaimableMemory(
   TestValue::adjust(
       "facebook::velox::memory::SharedArbitrator::sortCandidatesByReclaimableMemory",
       &candidates);
+}
+
+const SharedArbitrator::Candidate&
+SharedArbitrator::findCandidateWithLargestCapacity(
+    MemoryPool* requestor,
+    const std::vector<Candidate>& candidates) const {
+  VELOX_CHECK(!candidates.empty());
+  int32_t candidateIdx{0};
+  int64_t maxCapacity = candidates[candidateIdx].pool->capacity();
+  for (int32_t i = 1; i < candidates.size(); ++i) {
+    int64_t capacity = candidates[i].pool->capacity();
+    if (maxCapacity > capacity) {
+      continue;
+    }
+    if (capacity < maxCapacity) {
+      candidateIdx = i;
+      continue;
+    }
+    if (candidates[candidateIdx].pool == requestor) {
+      candidateIdx = i;
+    }
+  }
+  return candidates[candidateIdx];
 }
 
 SharedArbitrator::~SharedArbitrator() {
@@ -99,16 +122,54 @@ bool SharedArbitrator::growMemory(
     const std::vector<std::shared_ptr<MemoryPool>>& candidatePools,
     uint64_t targetBytes) {
   ScopedArbitration scopedArbitration(pool, this);
-  if (FOLLY_UNLIKELY(pool->aborted())) {
+  MemoryPool* requestor = pool->root();
+  if (FOLLY_UNLIKELY(requestor->aborted())) {
     ++numFailures_;
-    VELOX_MEM_POOL_ABORTED(pool->root());
+    VELOX_MEM_POOL_ABORTED(requestor);
   }
-  std::vector<Candidate> candidates = getCandidateStats(candidatePools);
-  const bool success = arbitrateMemory(pool->root(), candidates, targetBytes);
-  if (!success) {
+
+  std::vector<Candidate> candidates;
+  candidates.reserve(candidatePools.size());
+  int32_t numRetries{0};
+  for (; numRetries < numArbitrationRetries_; ++numRetries) {
+    // Get refreshed stats before the next arbitration attempt.
+    candidates = getCandidateStats(candidatePools);
+    if (arbitrateMemory(requestor, candidates, targetBytes)) {
+      return true;
+    }
+    VELOX_CHECK(!requestor->aborted());
+    handleOOM(requestor, candidates);
+  }
+  VELOX_MEM_LOG(ERROR)
+      << "Failed to arbitrate sufficient memory for memory pool "
+      << requestor->name() << ", request " << succinctBytes(targetBytes)
+      << " after " << numRetries
+      << " retries, Arbitrator state: " << toString();
+  ++numFailures_;
+  return false;
+}
+
+void SharedArbitrator::handleOOM(
+    MemoryPool* requestor,
+    std::vector<Candidate>& candidates) {
+  MemoryPool* victim =
+      findCandidateWithLargestCapacity(requestor, candidates).pool;
+  if (requestor != victim) {
+    VELOX_MEM_LOG(WARNING) << "Aborting victim memory pool " << victim->name()
+                           << " to free up memory for requestor "
+                           << requestor->name();
+  } else {
+    VELOX_MEM_LOG(ERROR) << "Aborting requestor memory pool "
+                         << requestor->name() << " itself to free up memory";
+  }
+  abort(victim);
+  // Free up all the unused capacity from the aborted memory pool and gives back
+  // to the arbitrator.
+  incrementFreeCapacity(victim->shrink());
+  if (requestor == victim) {
     ++numFailures_;
+    VELOX_MEM_POOL_ABORTED(requestor);
   }
-  return success;
 }
 
 bool SharedArbitrator::arbitrateMemory(
@@ -158,7 +219,7 @@ bool SharedArbitrator::arbitrateMemory(
         << "Failed to arbitrate sufficient memory for memory pool "
         << requestor->name() << ", request " << succinctBytes(targetBytes)
         << ", only " << succinctBytes(freedBytes)
-        << " has been freed, Arbitrator state: " << toStringLocked();
+        << " has been freed, Arbitrator state: " << toString();
     return false;
   }
 

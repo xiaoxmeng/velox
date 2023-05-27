@@ -77,6 +77,9 @@ class MemoryArbitrator {
     /// The minimal memory capacity to transfer out of or into a memory pool
     /// during the memory arbitration.
     uint64_t minMemoryPoolCapacityTransferSize{32 << 20};
+
+    /// The number of times to retry arbitration before giving up.
+    uint32_t numArbitrationRetries{0};
   };
   static std::unique_ptr<MemoryArbitrator> create(const Config& config);
 
@@ -154,12 +157,14 @@ class MemoryArbitrator {
         capacity_(config.capacity),
         initMemoryPoolCapacity_(config.initMemoryPoolCapacity),
         minMemoryPoolCapacityTransferSize_(
-            config.minMemoryPoolCapacityTransferSize) {}
+            config.minMemoryPoolCapacityTransferSize),
+        numArbitrationRetries_(config.numArbitrationRetries) {}
 
   const Kind kind_;
   const uint64_t capacity_;
   const uint64_t initMemoryPoolCapacity_;
   const uint64_t minMemoryPoolCapacityTransferSize_;
+  const uint32_t numArbitrationRetries_;
 };
 
 std::ostream& operator<<(std::ostream& out, const MemoryArbitrator::Kind& kind);
