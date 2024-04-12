@@ -18,11 +18,17 @@
 
 namespace facebook::velox::exec::test {
 
-std::shared_ptr<TempFilePath> TempFilePath::create() {
-  struct SharedTempFilePath : public TempFilePath {
-    SharedTempFilePath() : TempFilePath() {}
-  };
-  return std::make_shared<SharedTempFilePath>();
+std::shared_ptr<TempFilePath> TempFilePath::create(bool faultInjectionEnable) {
+  auto* tempFilePathPtr = new TempFilePath();
+  return std::shared_ptr<TempFilePath>(tempFilePathPtr);
 }
 
+std::string TempFilePath::createTempFile(TempFilePath* tempFilePath) {
+  char path[] = "/tmp/velox_test_XXXXXX";
+  tempFilePath->fd_ = mkstemp(path);
+  if (tempFilePath->fd_ == -1) {
+    VELOX_FAIL("Cannot open temp file");
+  }
+  return path;
+}
 } // namespace facebook::velox::exec::test

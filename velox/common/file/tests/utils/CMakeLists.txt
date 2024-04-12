@@ -11,13 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-add_subdirectory(utils)
 
-add_library(velox_file_test_utils TestUtils.cpp)
-target_link_libraries(velox_file_test_utils PUBLIC velox_file velox_file_test_lib)
+add_library(
+  velox_file_test_lib
+  FaultyFile.cpp
+  FaultyFileSystem.cpp)
 
-add_executable(velox_file_test FileTest.cpp UtilsTest.cpp)
-add_test(velox_file_test velox_file_test)
 target_link_libraries(
-  velox_file_test PRIVATE velox_file velox_file_test_utils velox_temp_path
-                          gmock gtest gtest_main)
+  velox_file_test_lib
+  velox_file)

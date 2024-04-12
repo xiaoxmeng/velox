@@ -24,27 +24,30 @@
 
 namespace facebook::velox::exec::test {
 
-// It manages the lifetime of a temporary directory.
+/// Manages the lifetime of a temporary directory.
 class TempDirectoryPath {
  public:
-  static std::shared_ptr<TempDirectoryPath> create();
+  static std::shared_ptr<TempDirectoryPath> create(
+      bool enableFaultInjection = false);
 
   virtual ~TempDirectoryPath();
-
-  const std::string path;
 
   TempDirectoryPath(const TempDirectoryPath&) = delete;
   TempDirectoryPath& operator=(const TempDirectoryPath&) = delete;
 
-  TempDirectoryPath() : path(createTempDirectory()) {}
-
-  static std::string createTempDirectory() {
-    char path[] = "/tmp/velox_test_XXXXXX";
-    const char* tempDirectoryPath = mkdtemp(path);
-    if (tempDirectoryPath == nullptr) {
-      throw std::logic_error("Cannot open temp directory");
-    }
-    return tempDirectoryPath;
+  std::string path() const {
+    return enableFaultInjection_ ? fmt::format("faulty:{}", path_) : path_;
   }
+
+ private:
+  static std::string createTempDirectory();
+
+  explicit TempDirectoryPath(bool enableFaultInjection)
+      : path_(createTempDirectory()),
+        enableFaultInjection_(enableFaultInjection) {}
+
+  const std::string path_;
+
+  bool enableFaultInjection_{false};
 };
 } // namespace facebook::velox::exec::test

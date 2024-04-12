@@ -26,23 +26,22 @@
 
 namespace facebook::velox::exec::test {
 
-// It manages the lifetime of a temporary file.
+/// Manages the lifetime of a temporary file.
 class TempFilePath {
  public:
-  static std::shared_ptr<TempFilePath> create();
+  static std::shared_ptr<TempFilePath> create(
+      bool faultInjectionEnable = false);
 
   virtual ~TempFilePath() {
-    unlink(path.c_str());
-    close(fd);
+    ::unlink(path_.c_str());
+    ::close(fd_);
   }
-
-  const std::string path;
 
   TempFilePath(const TempFilePath&) = delete;
   TempFilePath& operator=(const TempFilePath&) = delete;
 
   void append(std::string data) {
-    std::ofstream file(path, std::ios_base::app);
+    std::ofstream file(path_, std::ios_base::app);
     file << data;
     file.flush();
     file.close();
@@ -50,31 +49,25 @@ class TempFilePath {
 
   const int64_t fileSize() {
     struct stat st;
-    stat(path.data(), &st);
+    stat(path_.data(), &st);
     return st.st_size;
   }
 
   const int64_t fileModifiedTime() {
     struct stat st;
-    stat(path.data(), &st);
+    ::stat(path_.data(), &st);
     return st.st_mtime;
   }
 
  private:
-  int fd;
+  static std::string createTempFile(TempFilePath* tempFilePath);
 
-  TempFilePath() : path(createTempFile(this)) {
-    VELOX_CHECK_NE(fd, -1);
+  TempFilePath() : path_(createTempFile(this)) {
+    VELOX_CHECK_NE(fd_, -1);
   }
 
-  static std::string createTempFile(TempFilePath* tempFilePath) {
-    char path[] = "/tmp/velox_test_XXXXXX";
-    tempFilePath->fd = mkstemp(path);
-    if (tempFilePath->fd == -1) {
-      throw std::logic_error("Cannot open temp file");
-    }
-    return path;
-  }
+  const std::string path_;
+  int fd_;
 };
 
 } // namespace facebook::velox::exec::test
