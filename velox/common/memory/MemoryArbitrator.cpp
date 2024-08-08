@@ -163,12 +163,14 @@ void MemoryArbitrator::unregisterFactory(const std::string& kind) {
     MemoryPool* pool,
     uint64_t growBytes,
     uint64_t reservationBytes) {
+  VELOX_CHECK(pool->isRoot());
   return pool->grow(growBytes, reservationBytes);
 }
 
 /*static*/ uint64_t MemoryArbitrator::shrinkPool(
     MemoryPool* pool,
     uint64_t targetBytes) {
+  VELOX_CHECK(pool->isRoot());
   return pool->shrink(targetBytes);
 }
 

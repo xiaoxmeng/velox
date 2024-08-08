@@ -1270,13 +1270,6 @@ DEBUG_ONLY_TEST_F(
         1);
     ASSERT_GT(
         runtimeStats[SharedArbitrator::kLocalArbitrationQueueWallNanos].sum, 0);
-    ASSERT_EQ(
-        runtimeStats[SharedArbitrator::kLocalArbitrationLockWaitWallNanos]
-            .count,
-        1);
-    ASSERT_GT(
-        runtimeStats[SharedArbitrator::kLocalArbitrationLockWaitWallNanos].sum,
-        0);
     ASSERT_EQ(runtimeStats[SharedArbitrator::kGlobalArbitrationCount].count, 0);
     ASSERT_EQ(runtimeStats[SharedArbitrator::kLocalArbitrationCount].count, 1);
     ASSERT_EQ(runtimeStats[SharedArbitrator::kLocalArbitrationCount].sum, 1);
@@ -1457,13 +1450,6 @@ DEBUG_ONLY_TEST_F(
         runtimeStats[SharedArbitrator::kMemoryArbitrationWallNanos].sum, 0);
     ASSERT_EQ(
         runtimeStats[SharedArbitrator::kLocalArbitrationQueueWallNanos].count,
-        0);
-    ASSERT_EQ(
-        runtimeStats[SharedArbitrator::kLocalArbitrationLockWaitWallNanos]
-            .count,
-        1);
-    ASSERT_GT(
-        runtimeStats[SharedArbitrator::kLocalArbitrationLockWaitWallNanos].sum,
         0);
     ASSERT_EQ(runtimeStats[SharedArbitrator::kGlobalArbitrationCount].count, 0);
     ASSERT_EQ(runtimeStats[SharedArbitrator::kLocalArbitrationCount].count, 0);
@@ -2769,7 +2755,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromRequestor) {
     std::atomic_int testInjectionCount{0};
     std::atomic_bool arbitrationStarted{false};
     SCOPED_TESTVALUE_SET(
-        "facebook::velox::memory::SharedArbitrator::startArbitration",
+        "facebook::velox::memory::SharedArbitrator::ArbitrationPool::startArbitration",
         std::function<void(const SharedArbitrator*)>(
             ([&](const SharedArbitrator* /*unused*/) {
               if (!arbitrationStarted) {
@@ -2958,7 +2944,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, failedToReclaimFromOtherTask) {
     std::atomic<int> testInjectionCount{0};
     std::atomic<bool> arbitrationStarted{false};
     SCOPED_TESTVALUE_SET(
-        "facebook::velox::memory::SharedArbitrator::startArbitration",
+        "facebook::velox::memory::SharedArbitrator::ArbitrationPool::startArbitration",
         std::function<void(const SharedArbitrator*)>(
             ([&](const SharedArbitrator* /*unsed*/) {
               if (!arbitrationStarted) {
@@ -3111,7 +3097,7 @@ DEBUG_ONLY_TEST_F(MockSharedArbitrationTest, concurrentArbitrationRequests) {
   folly::EventCount arbitrationWait;
   std::atomic_bool injectOnce{true};
   SCOPED_TESTVALUE_SET(
-      "facebook::velox::memory::SharedArbitrator::startArbitration",
+      "facebook::velox::memory::SharedArbitrator::ArbitrationPool::startArbitration",
       std::function<void(const SharedArbitrator*)>(
           ([&](const SharedArbitrator* arbitrator) {
             if (!injectOnce.exchange(false)) {
@@ -3193,7 +3179,7 @@ DEBUG_ONLY_TEST_F(
   auto arbitrationBlockKey = arbitrationBlock.prepareWait();
 
   SCOPED_TESTVALUE_SET(
-      "facebook::velox::memory::SharedArbitrator::startArbitration",
+      "facebook::velox::memory::SharedArbitrator::ArbitrationPool::startArbitration",
       std::function<void(const SharedArbitrator*)>(
           ([&](const SharedArbitrator* /*unsed*/) {
             arbitrationRun.notify();

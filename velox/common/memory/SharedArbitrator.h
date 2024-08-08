@@ -26,6 +26,110 @@
 
 namespace facebook::velox::memory {
 
+class ArbitrationOperation;
+class SharedArbitrator;
+class ArbitrationCandidate;
+
+class ArbitrationPool {
+ public:
+  explicit ArbitrationPool(const std::shared_ptr<MemoryPool>& pool)
+      : pool_(std::move(pool)) {
+    VELOX_CHECK_NOT_NULL(pool_);
+  }
+
+  ~ArbitrationPool() {
+    VELOX_CHECK(!underArbitration());
+  }
+
+  /// Returns true if this pool is under memory arbitration operation.
+  bool underArbitration() const;
+
+  void reclaim(ContinueFuture* future);
+
+  /// Invoked to start next memory arbitration request, and it will wait for
+  /// the serialized execution if there is a running or other waiting
+  /// arbitration requests.
+  void startArbitration(ArbitrationOperation* op);
+
+  /// Invoked by a finished memory arbitration request to kick off the next
+  /// arbitration request execution if there are any ones waiting.
+  void finishArbitration(ArbitrationOperation* op);
+
+ private:
+  const std::shared_ptr<MemoryPool> pool_;
+
+  std::mutex mu_;
+
+  bool spillRunning_{false};
+
+  // Points to the current running arbitration operation if not null.
+  ArbitrationOperation* current_;
+
+  std::unique_ptr<ContinuePromise> finishWaitPromise_;
+  std::vector<ContinuePromise> spillWaitPromises_;
+
+  // The promises of the arbitration requests from the same query pool waiting
+  // for the serial execution.
+  std::vector<ContinuePromise> waitPromises_;
+};
+
+/// The memory pool candidate stats used by arbitration.
+struct ArbitrationCandidate {
+  std::shared_ptr<ArbitrationPool> candidate;
+  int64_t reclaimableBytes{0};
+  int64_t freeBytes{0};
+  int64_t reservedBytes{0};
+
+  std::string toString() const;
+};
+
+/// Contains the execution state of an arbitration operation.
+class ArbitrationOperation {
+ public:
+  ArbitrationOperation(uint64_t requestBytes, SharedArbitrator* arbitrator)
+      : ArbitrationOperation(nullptr, requestBytes, arbitrator) {}
+
+  ArbitrationOperation(
+      MemoryPool* requestor,
+      uint64_t requestBytes,
+      SharedArbitrator* arbitrator);
+
+  ~ArbitrationOperation();
+
+  MemoryPool* requestor() const {
+    return requestor_;
+  }
+
+  uint64_t requestBytes() const {
+    return requestBytes_;
+  }
+
+  ArbitrationPool* pool() const {
+    return arbitrationPool_.get();
+  }
+
+  void enterArbitration();
+
+  void leaveArbitration();
+
+ private:
+  SharedArbitrator* const arbitrator_;
+  MemoryPool* const requestor_;
+  const uint64_t requestBytes_;
+  const std::shared_ptr<ArbitrationPool> arbitrationPool_;
+  // The start time of this arbitration operation.
+  std::chrono::steady_clock::time_point startTime_;
+
+  // The candidate memory pools for arbitration use.
+  std::vector<std::shared_ptr<ArbitrationCandidate>> candidates_;
+
+  // The time that waits in local arbitration queue.
+  uint64_t localArbitrationQueueTimeUs_{0};
+
+  // The time that waits in global arbitration queue.
+  uint64_t globalArbitrationQueueTimeUs_{0};
+};
+
 /// Used to achieve dynamic memory sharing among running queries. When a
 /// memory pool exceeds its current memory capacity, the arbitrator tries to
 /// grow its capacity by reclaim the overused memory from the query with
@@ -145,60 +249,12 @@ class SharedArbitrator : public memory::MemoryArbitrator {
       "localArbitrationQueueWallNanos"};
   static inline const std::string kLocalArbitrationLockWaitWallNanos{
       "localArbitrationLockWaitWallNanos"};
-  static inline const std::string kGlobalArbitrationLockWaitWallNanos{
-      "globalArbitrationLockWaitWallNanos"};
-
-  /// The candidate memory pool stats used by arbitration.
-  struct Candidate {
-    std::shared_ptr<MemoryPool> pool;
-    int64_t reclaimableBytes{0};
-    int64_t freeBytes{0};
-    int64_t reservedBytes{0};
-
-    std::string toString() const;
-  };
+  static inline const std::string kGlobalArbitrationQueueWallNanos{
+      "globalArbitrationQueueWallNanos"};
 
  private:
   // The kind string of shared arbitrator.
   inline static const std::string kind_{"SHARED"};
-
-  // Contains the execution state of an arbitration operation.
-  struct ArbitrationOperation {
-    MemoryPool* const requestPool;
-    MemoryPool* const requestRoot;
-    const uint64_t requestBytes;
-    // The start time of this arbitration operation.
-    const std::chrono::steady_clock::time_point startTime;
-
-    // The candidate memory pools.
-    std::vector<Candidate> candidates;
-
-    // The time that waits in local arbitration queue.
-    uint64_t localArbitrationQueueTimeUs{0};
-
-    // The time that waits to acquire the local arbitration lock.
-    uint64_t localArbitrationLockWaitTimeUs{0};
-
-    // The time that waits to acquire the global arbitration lock.
-    uint64_t globalArbitrationLockWaitTimeUs{0};
-
-    explicit ArbitrationOperation(uint64_t requestBytes)
-        : ArbitrationOperation(nullptr, requestBytes) {}
-
-    ArbitrationOperation(MemoryPool* _requestor, uint64_t _requestBytes)
-        : requestPool(_requestor),
-          requestRoot(_requestor == nullptr ? nullptr : _requestor->root()),
-          requestBytes(_requestBytes),
-          startTime(std::chrono::steady_clock::now()) {}
-
-    uint64_t waitTimeUs() const {
-      return localArbitrationQueueTimeUs + localArbitrationLockWaitTimeUs +
-          globalArbitrationLockWaitTimeUs;
-    }
-
-    void enterArbitration();
-    void leaveArbitration();
-  };
 
   // Used to start and finish an arbitration operation initiated from a memory
   // pool or memory capacity shrink request sent through shrinkPools() API.
@@ -212,22 +268,6 @@ class SharedArbitrator : public memory::MemoryArbitrator {
     ArbitrationOperation* const operation_;
     SharedArbitrator* const arbitrator_;
     const ScopedMemoryArbitrationContext arbitrationCtx_;
-    const std::chrono::steady_clock::time_point startTime_;
-  };
-
-  // The arbitration running queue for arbitration requests from the same query
-  // pool.
-  struct ArbitrationQueue {
-    // Points to the current running arbitration.
-    ArbitrationOperation* current;
-
-    // The promises of the arbitration requests from the same query pool waiting
-    // for the serial execution.
-    std::vector<ContinuePromise> waitPromises;
-
-    explicit ArbitrationQueue(ArbitrationOperation* op) : current(op) {
-      VELOX_CHECK_NOT_NULL(current);
-    }
   };
 
   // Invoked to check if the memory growth will exceed the memory pool's max
@@ -244,15 +284,6 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   // Invoked to reclaim the memory from the other query memory pools to grow the
   // request memory pool's capacity.
   bool arbitrateMemory(ArbitrationOperation* op);
-
-  // Invoked to start next memory arbitration request, and it will wait for
-  // the serialized execution if there is a running or other waiting
-  // arbitration requests.
-  void startArbitration(ArbitrationOperation* op);
-
-  // Invoked by a finished memory arbitration request to kick off the next
-  // arbitration request execution if there are any ones waiting.
-  void finishArbitration(ArbitrationOperation* op);
 
   // Invoked to run local arbitration on the request memory pool. It first
   // ensures the memory growth is within both memory pool and arbitrator
@@ -281,6 +312,8 @@ class SharedArbitrator : public memory::MemoryArbitrator {
       ArbitrationOperation* op,
       uint64_t& maxGrowTarget,
       uint64_t& minGrowTarget);
+
+  std::shared_ptr<ArbitrationPool> getPool(const std::string& name);
 
   // Invoked to get or refresh the candidate memory pools for arbitration. If
   // 'freeCapacityOnly' is true, then we only get free capacity stats for each
@@ -343,6 +376,13 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   // by 'reservationBytes'. The function throws if the growth fails.
   void
   checkedGrow(MemoryPool* pool, uint64_t growBytes, uint64_t reservationBytes);
+
+  void checkedGrow(
+      ArbitrationPool* pool,
+      uint64_t growBytes,
+      uint64_t reservationBytes) {
+    checkedGrow(pool->pool(), growBytes, reservationBytes);
+  }
 
   // Invoked to reclaim used memory from 'targetPool' with specified
   // 'targetBytes'. The function returns the actually freed capacity.
@@ -416,12 +456,14 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   // the reserved capacity as specified by 'memoryPoolReservedCapacity_'.
   int64_t minGrowCapacity(const MemoryPool& pool) const;
 
-  // Returns true if 'pool' is under memory arbitration.
-  bool isUnderArbitrationLocked(MemoryPool* pool) const;
+  void incrementArbitrationRequests();
+  void incrementArbitrationFailures();
 
-  void updateArbitrationRequestStats();
+  void updateArbitrationTime(uint64_t arbitrationTimeUs);
+  void updateArbitrationWaitTime(uint64_t waitTimeUs);
 
-  void updateArbitrationFailureStats();
+  void incrementPendingArbitrationOperations();
+  void decrementPendingArbitrationOperations();
 
   const uint64_t reservedCapacity_;
   const uint64_t memoryPoolInitialCapacity_;
@@ -432,31 +474,19 @@ class SharedArbitrator : public memory::MemoryArbitrator {
   const bool checkUsageLeak_;
 
   mutable folly::SharedMutex poolLock_;
-  std::unordered_map<MemoryPool*, std::weak_ptr<MemoryPool>> candidates_;
+  std::unordered_map<std::string, std::shared_ptr<ArbitrationPool>> pools_;
 
   // Lock used to protect the arbitrator state.
   mutable std::mutex stateLock_;
   tsan_atomic<uint64_t> freeReservedCapacity_{0};
   tsan_atomic<uint64_t> freeNonReservedCapacity_{0};
 
-  // Contains the arbitration running queues with one per each query memory
-  // pool.
-  std::unordered_map<MemoryPool*, std::unique_ptr<ArbitrationQueue>>
-      arbitrationQueues_;
-
-  // R/W lock used to control local and global arbitration runs. A local
-  // arbitration run needs to hold a shared lock while the latter needs to hold
-  // an exclusive lock. Hence, multiple local arbitration runs from different
-  // query memory pools can run in parallel but the global ones has to run with
-  // one at a time.
-  mutable std::shared_mutex arbitrationLock_;
-
   std::atomic_uint64_t numRequests_{0};
   std::atomic_uint32_t numPending_{0};
   tsan_atomic<uint64_t> numAborted_{0};
   std::atomic_uint64_t numFailures_{0};
   std::atomic_uint64_t waitTimeUs_{0};
-  tsan_atomic<uint64_t> arbitrationTimeUs_{0};
+  std::atomic<uint64_t> arbitrationTimeUs_{0};
   tsan_atomic<uint64_t> reclaimedFreeBytes_{0};
   tsan_atomic<uint64_t> reclaimedUsedBytes_{0};
   tsan_atomic<uint64_t> reclaimTimeUs_{0};

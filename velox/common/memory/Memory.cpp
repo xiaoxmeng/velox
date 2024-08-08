@@ -273,7 +273,7 @@ std::shared_ptr<MemoryPool> MemoryManager::addRootPool(
       options);
   pools_.emplace(poolName, pool);
   VELOX_CHECK_EQ(pool->capacity(), 0);
-  arbitrator_->addPool(pool);
+  pool->registerArbitration();
   RECORD_HISTOGRAM_METRIC_VALUE(
       kMetricMemoryPoolInitialCapacityBytes, pool->capacity());
   return pool;
@@ -312,7 +312,6 @@ void MemoryManager::dropPool(MemoryPool* pool) {
   }
   pools_.erase(it);
   VELOX_DCHECK_EQ(pool->reservedBytes(), 0);
-  arbitrator_->removePool(pool);
 }
 
 MemoryPool& MemoryManager::deprecatedSharedLeafPool() {

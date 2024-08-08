@@ -372,6 +372,10 @@ class MemoryPool : public std::enable_shared_from_this<MemoryPool> {
   /// Returns the memory reclaimer of this memory pool if not null.
   virtual MemoryReclaimer* reclaimer() const = 0;
 
+  virtual void registerArbitration() = 0;
+
+  virtual void unregisterArbitration() = 0;
+
   /// Invoked by the memory arbitrator to enter memory arbitration processing.
   /// It is a noop if 'reclaimer' is not set, otherwise invoke the reclaimer's
   /// corresponding method.
@@ -650,6 +654,10 @@ class MemoryPoolImpl : public MemoryPool {
   void setReclaimer(std::unique_ptr<MemoryReclaimer> reclaimer) override;
 
   MemoryReclaimer* reclaimer() const override;
+
+  void registerArbitration() override;
+
+  void unregisterArbitration() override;
 
   void enterArbitration() override;
 

@@ -28,9 +28,7 @@ namespace facebook::velox::core {
 
 class QueryCtx : public std::enable_shared_from_this<QueryCtx> {
  public:
-  ~QueryCtx() {
-    VELOX_CHECK(!underArbitration_);
-  }
+  ~QueryCtx();
 
   /// QueryCtx is used in different places. When used with `Task::start()`, it's
   /// required that the caller supplies the executor and ensure its lifetime

@@ -1044,6 +1044,14 @@ uint64_t MemoryPoolImpl::reclaim(
   return reclaimer()->reclaim(this, targetBytes, maxWaitMs, stats);
 }
 
+void MemoryPoolImpl::registerArbitration() {
+  manager_->arbitrator()->addPool(shared_from_this());
+}
+
+void MemoryPoolImpl::unregisterArbitration() {
+  manager_->arbitrator()->removePool(this);
+}
+
 void MemoryPoolImpl::enterArbitration() {
   if (reclaimer() != nullptr) {
     reclaimer()->enterArbitration();
